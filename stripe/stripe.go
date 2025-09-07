@@ -2,7 +2,9 @@ package stripe
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/International-Combat-Archery-Alliance/payments"
 	"github.com/stripe/stripe-go/v82"
@@ -29,11 +31,23 @@ func NewClient(secretKey string, endpointSecret string) *Client {
 func (c *Client) ConfirmCheckout(ctx context.Context, payload []byte, signature string) (map[string]string, error) {
 	event, err := webhook.ConstructEvent(payload, signature, c.endpointSecret)
 	if err != nil {
-		return nil, fmt.Errorf("payload failed signature verification: %w", err)
+		return nil, payments.NewSignatureValidationError("payload failed signature verification", err)
 	}
 
-	// TODO: check event and get metadata out
-	return map[string]string{}, nil
+	if event.Type != stripe.EventTypeCheckoutSessionCompleted {
+		return nil, payments.NewNotCheckoutConfirmedEventError(fmt.Sprintf("Not a checkout session completed event. Instead got %q", event.Type))
+	}
+
+	var session stripe.CheckoutSession
+	if err := json.Unmarshal(event.Data.Raw, &session); err != nil {
+		return nil, payments.NewInvalidWebhookEventDataError("failed to unmarshal checkout session", err)
+	}
+
+	if session.PaymentStatus != stripe.CheckoutSessionPaymentStatusPaid {
+		return nil, payments.NewNotPaidError(fmt.Sprintf("Payment status is not paid. Instead got %q", session.PaymentStatus))
+	}
+
+	return session.Metadata, nil
 }
 
 // CreateCheckout implements payments.CheckoutManager.
@@ -51,15 +65,28 @@ func (c *Client) CreateCheckout(ctx context.Context, params payments.CheckoutPar
 		}
 	}
 
-	s, err := c.client.V1CheckoutSessions.Create(ctx, &stripe.CheckoutSessionCreateParams{
+	checkoutParams := &stripe.CheckoutSessionCreateParams{
 		Mode:      stripe.String(string(stripe.CheckoutSessionModePayment)),
 		UIMode:    stripe.String("embedded"),
 		ReturnURL: stripe.String(params.ReturnURL),
 		LineItems: lineItems,
-	})
-	if err != nil {
-		return payments.CheckoutInfo{}, fmt.Errorf("failed to create checkout session: %w", err)
+		Metadata:  params.Metadata,
+		AdaptivePricing: &stripe.CheckoutSessionCreateAdaptivePricingParams{
+			Enabled: stripe.Bool(params.AllowAdaptivePricing),
+		},
 	}
 
-	return payments.CheckoutInfo{}, nil
+	if params.SessionAliveDuration != nil {
+		checkoutParams.ExpiresAt = stripe.Int64(time.Now().Add(*params.SessionAliveDuration).Unix())
+	}
+
+	s, err := c.client.V1CheckoutSessions.Create(ctx, checkoutParams)
+	if err != nil {
+		return payments.CheckoutInfo{}, payments.NewFailedToCreateCheckoutSessionError("failed to create checkout session", err)
+	}
+
+	return payments.CheckoutInfo{
+		ClientSecret: s.ClientSecret,
+		SessionId:    s.ID,
+	}, nil
 }
