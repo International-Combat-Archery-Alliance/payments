@@ -55,6 +55,7 @@ func (c *Client) CreateCheckout(ctx context.Context, params payments.CheckoutPar
 	lineItems := make([]*stripe.CheckoutSessionCreateLineItemParams, len(params.Items))
 	for i, item := range params.Items {
 		lineItems[i] = &stripe.CheckoutSessionCreateLineItemParams{
+			Quantity: stripe.Int64(int64(item.Quanity)),
 			PriceData: &stripe.CheckoutSessionCreateLineItemPriceDataParams{
 				Currency:   stripe.String(item.Price.Currency().Code),
 				UnitAmount: stripe.Int64(item.Price.Amount()),

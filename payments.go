@@ -8,8 +8,9 @@ import (
 )
 
 type Item struct {
-	Name  string
-	Price *money.Money
+	Name    string
+	Price   *money.Money
+	Quanity int
 }
 
 type CheckoutParams struct {
