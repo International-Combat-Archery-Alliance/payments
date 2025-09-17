@@ -8,6 +8,7 @@ const (
 	ErrorReasonSignatureValidation           Reason = "SignatureValidationError"
 	ErrorReasonFailedToCreateCheckoutSession Reason = "FailedToCreateCheckoutSession"
 	ErrorReasonInvalidWebhookEventData       Reason = "InvalidWebhookEventData"
+	ErrorReasonCheckoutExpired               Reason = "CheckoutExpired"
 	ErrorReasonNotCheckoutConfirmedEvent     Reason = "NotCheckoutConfirmedEvent"
 	ErrorReasonNotPaid                       Reason = "PaymentStatusIsNotPaid"
 )
@@ -50,6 +51,10 @@ func NewFailedToCreateCheckoutSessionError(message string, cause error) *Error {
 
 func NewInvalidWebhookEventDataError(message string, cause error) *Error {
 	return newError(ErrorReasonInvalidWebhookEventData, message, cause)
+}
+
+func NewCheckoutExpiredError(message string) *Error {
+	return newError(ErrorReasonCheckoutExpired, message, nil)
 }
 
 func NewNotCheckoutConfirmedEventError(message string) *Error {

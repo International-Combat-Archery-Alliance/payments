@@ -27,7 +27,6 @@ func NewClient(secretKey string, endpointSecret string) *Client {
 	}
 }
 
-// ConfirmCheckout implements payments.CheckoutManager.
 func (c *Client) ConfirmCheckout(ctx context.Context, payload []byte, signature string) (map[string]string, error) {
 	event, err := webhook.ConstructEvent(payload, signature, c.endpointSecret)
 	if err != nil {
@@ -35,7 +34,12 @@ func (c *Client) ConfirmCheckout(ctx context.Context, payload []byte, signature 
 	}
 
 	if event.Type != stripe.EventTypeCheckoutSessionCompleted {
-		return nil, payments.NewNotCheckoutConfirmedEventError(fmt.Sprintf("Not a checkout session completed event. Instead got %q", event.Type))
+		switch event.Type {
+		case stripe.EventTypeCheckoutSessionExpired:
+			return nil, payments.NewCheckoutExpiredError("Checkout session expired")
+		default:
+			return nil, payments.NewNotCheckoutConfirmedEventError(fmt.Sprintf("Not a checkout session completed event. Instead got %q", event.Type))
+		}
 	}
 
 	var session stripe.CheckoutSession
@@ -50,7 +54,6 @@ func (c *Client) ConfirmCheckout(ctx context.Context, payload []byte, signature 
 	return session.Metadata, nil
 }
 
-// CreateCheckout implements payments.CheckoutManager.
 func (c *Client) CreateCheckout(ctx context.Context, params payments.CheckoutParams) (payments.CheckoutInfo, error) {
 	lineItems := make([]*stripe.CheckoutSessionCreateLineItemParams, len(params.Items))
 	for i, item := range params.Items {
