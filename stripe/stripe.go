@@ -33,18 +33,25 @@ func (c *Client) ConfirmCheckout(ctx context.Context, payload []byte, signature 
 		return nil, payments.NewSignatureValidationError("payload failed signature verification", err)
 	}
 
+	var session *stripe.CheckoutSession
+
 	if event.Type != stripe.EventTypeCheckoutSessionCompleted {
 		switch event.Type {
+		case stripe.EventTypeCheckoutSessionCompleted:
+			session, err = unmarshalCheckoutSession(event.Data.Raw)
+			if err != nil {
+				return nil, err
+			}
 		case stripe.EventTypeCheckoutSessionExpired:
-			return nil, payments.NewCheckoutExpiredError("Checkout session expired")
+			session, err = unmarshalCheckoutSession(event.Data.Raw)
+			if err != nil {
+				return nil, err
+			}
+
+			return session.Metadata, payments.NewCheckoutExpiredError("Checkout session expired")
 		default:
 			return nil, payments.NewNotCheckoutConfirmedEventError(fmt.Sprintf("Not a checkout session completed event. Instead got %q", event.Type))
 		}
-	}
-
-	var session stripe.CheckoutSession
-	if err := json.Unmarshal(event.Data.Raw, &session); err != nil {
-		return nil, payments.NewInvalidWebhookEventDataError("failed to unmarshal checkout session", err)
 	}
 
 	if session.PaymentStatus != stripe.CheckoutSessionPaymentStatusPaid {
@@ -52,6 +59,14 @@ func (c *Client) ConfirmCheckout(ctx context.Context, payload []byte, signature 
 	}
 
 	return session.Metadata, nil
+}
+
+func unmarshalCheckoutSession(data []byte) (*stripe.CheckoutSession, error) {
+	var session stripe.CheckoutSession
+	if err := json.Unmarshal(data, &session); err != nil {
+		return nil, payments.NewInvalidWebhookEventDataError("failed to unmarshal checkout session", err)
+	}
+	return &session, nil
 }
 
 func (c *Client) CreateCheckout(ctx context.Context, params payments.CheckoutParams) (payments.CheckoutInfo, error) {
