@@ -35,23 +35,21 @@ func (c *Client) ConfirmCheckout(ctx context.Context, payload []byte, signature 
 
 	var session *stripe.CheckoutSession
 
-	if event.Type != stripe.EventTypeCheckoutSessionCompleted {
-		switch event.Type {
-		case stripe.EventTypeCheckoutSessionCompleted:
-			session, err = unmarshalCheckoutSession(event.Data.Raw)
-			if err != nil {
-				return nil, err
-			}
-		case stripe.EventTypeCheckoutSessionExpired:
-			session, err = unmarshalCheckoutSession(event.Data.Raw)
-			if err != nil {
-				return nil, err
-			}
-
-			return session.Metadata, payments.NewCheckoutExpiredError("Checkout session expired")
-		default:
-			return nil, payments.NewNotCheckoutConfirmedEventError(fmt.Sprintf("Not a checkout session completed event. Instead got %q", event.Type))
+	switch event.Type {
+	case stripe.EventTypeCheckoutSessionCompleted:
+		session, err = unmarshalCheckoutSession(event.Data.Raw)
+		if err != nil {
+			return nil, err
 		}
+	case stripe.EventTypeCheckoutSessionExpired:
+		session, err = unmarshalCheckoutSession(event.Data.Raw)
+		if err != nil {
+			return nil, err
+		}
+
+		return session.Metadata, payments.NewCheckoutExpiredError("Checkout session expired")
+	default:
+		return nil, payments.NewNotCheckoutConfirmedEventError(fmt.Sprintf("Not a checkout session completed event. Instead got %q", event.Type))
 	}
 
 	if session.PaymentStatus != stripe.CheckoutSessionPaymentStatusPaid {
