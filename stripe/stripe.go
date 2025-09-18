@@ -91,6 +91,7 @@ func (c *Client) CreateCheckout(ctx context.Context, params payments.CheckoutPar
 		AdaptivePricing: &stripe.CheckoutSessionCreateAdaptivePricingParams{
 			Enabled: stripe.Bool(params.AllowAdaptivePricing),
 		},
+		CustomerEmail: params.CustomerEmail,
 	}
 
 	if params.SessionAliveDuration != nil {

@@ -23,6 +23,7 @@ type CheckoutParams struct {
 	// If the payment processor has an adaptive pricing feature (i.e. auto converting currencies),
 	// enable or disable it.
 	AllowAdaptivePricing bool
+	CustomerEmail        *string
 }
 
 type CheckoutInfo struct {
