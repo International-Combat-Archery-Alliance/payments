@@ -39,8 +39,50 @@ func main() {
 	fmt.Println("\n=== Example 2: Filter charges by metadata ===")
 	listDonationsByMetadata(ctx, client)
 
-	fmt.Println("\n=== Example 3: Aggregate donations by state ===")
-	aggregateDonationsByState(ctx, client)
+	fmt.Println("\n=== Example 4: Paginate through charges (API-friendly) ===")
+	listChargesPaginated(ctx, client)
+}
+
+// listChargesPaginated demonstrates the paginated API for use in HTTP endpoints
+func listChargesPaginated(ctx context.Context, querier payments.PaymentQuerier) {
+	// Get charges from last 30 days, 5 per page
+	thirtyDaysAgo := time.Now().AddDate(0, 0, -30)
+
+	params := payments.ChargeListPaginatedParams{
+		CreatedAfter: &thirtyDaysAgo,
+		Status:       "succeeded",
+		Limit:        1,
+	}
+
+	pageNum := 1
+	for {
+		page, err := querier.ListChargesPaginated(ctx, params)
+		if err != nil {
+			log.Printf("Error fetching page %d: %v", pageNum, err)
+			return
+		}
+
+		fmt.Printf("  Page %d: %d charges (HasMore: %v)\n", pageNum, len(page.Payments), page.HasMore)
+
+		for _, payment := range page.Payments {
+			fmt.Printf("    - %s: %s\n", payment.ID, payment.Amount.Display())
+		}
+
+		if !page.HasMore {
+			fmt.Printf("\n  Total pages fetched: %d\n", pageNum)
+			break
+		}
+
+		// Use the cursor to fetch the next page
+		params.Cursor = page.NextCursor
+		pageNum++
+
+		// Safety limit for example
+		if pageNum > 3 {
+			fmt.Println("\n  (Stopped after 3 pages for demo)")
+			break
+		}
+	}
 }
 
 // listRecentCharges demonstrates basic charge listing with date range

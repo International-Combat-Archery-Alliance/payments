@@ -10,6 +10,8 @@ import (
 	"github.com/International-Combat-Archery-Alliance/payments"
 	"github.com/Rhymond/go-money"
 	"github.com/stripe/stripe-go/v82"
+	"github.com/stripe/stripe-go/v82/charge"
+	"github.com/stripe/stripe-go/v82/paymentintent"
 	"github.com/stripe/stripe-go/v82/webhook"
 )
 
@@ -18,6 +20,7 @@ var _ payments.PaymentQuerier = &Client{}
 
 type Client struct {
 	client         *stripe.Client
+	secretKey      string
 	endpointSecret string
 }
 
@@ -26,6 +29,7 @@ func NewClient(secretKey string, endpointSecret string) *Client {
 
 	return &Client{
 		client:         sc,
+		secretKey:      secretKey,
 		endpointSecret: endpointSecret,
 	}
 }
@@ -127,7 +131,7 @@ func (c *Client) ListCharges(ctx context.Context, params payments.ChargeListPara
 		// When metadata filtering is needed, search PaymentIntents instead
 		// (metadata is stored on PaymentIntent, not Charge)
 		if len(params.MetadataFilter) > 0 {
-			searchParams := buildPaymentIntentSearchParams(params)
+			searchParams := buildPaymentIntentSearchParams(convertToPaginatedParams(params, 100))
 			for pi, err := range c.client.V1PaymentIntents.Search(ctx, searchParams) {
 				if err != nil {
 					yield(payments.Payment{}, err)
@@ -136,7 +140,6 @@ func (c *Client) ListCharges(ctx context.Context, params payments.ChargeListPara
 
 				// Get the latest charge from the PaymentIntent
 				if pi.LatestCharge != nil && pi.LatestCharge.ID != "" {
-					// Try to get the full charge data if expanded
 					payment := convertPaymentIntentToPayment(pi)
 					if !yield(payment, nil) {
 						return
@@ -147,7 +150,7 @@ func (c *Client) ListCharges(ctx context.Context, params payments.ChargeListPara
 		}
 
 		// Use List API when no metadata filtering needed
-		listParams := buildListParams(params)
+		listParams := buildListParams(convertToPaginatedParams(params, 100))
 		for charge, err := range c.client.V1Charges.List(ctx, listParams) {
 			if err != nil {
 				yield(payments.Payment{}, err)
@@ -162,8 +165,121 @@ func (c *Client) ListCharges(ctx context.Context, params payments.ChargeListPara
 	}
 }
 
-func buildPaymentIntentSearchParams(params payments.ChargeListParams) *stripe.PaymentIntentSearchParams {
+func (c *Client) ListChargesPaginated(ctx context.Context, params payments.ChargeListPaginatedParams) (payments.ChargesPage, error) {
+	// Set default limit if not specified
+	limit := params.Limit
+	if limit <= 0 {
+		limit = 10
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	// When metadata filtering is needed, search PaymentIntents instead
+	// (metadata is stored on PaymentIntent, not Charge)
+	if len(params.MetadataFilter) > 0 {
+		return c.listChargesPaginatedFromSearch(ctx, params, limit)
+	}
+
+	// Use List API when no metadata filtering needed
+	return c.listChargesPaginatedFromList(ctx, params, limit)
+}
+
+func (c *Client) listChargesPaginatedFromSearch(ctx context.Context, params payments.ChargeListPaginatedParams, limit int) (payments.ChargesPage, error) {
+	// TODO: Use the new stripe.Client pattern once pagination properties are exposed.
+	// Currently the new client doesn't expose has_more/next_page (see: https://github.com/stripe/stripe-go/issues/2168).
+	// For now, we use the deprecated paymentintent.Client which still exposes these properties.
+	params.Limit = limit
+	searchParams := buildPaymentIntentSearchParams(params)
+	if params.Cursor != "" {
+		searchParams.Page = stripe.String(params.Cursor)
+	}
+
+	// Create deprecated client with our API key and backend
+	piClient := &paymentintent.Client{
+		B:   stripe.GetBackend(stripe.APIBackend),
+		Key: c.secretKey,
+	}
+
+	// Use deprecated resource-specific client to get pagination info
+	iter := piClient.Search(searchParams)
+
+	result := payments.ChargesPage{
+		Payments: make([]payments.Payment, 0, limit),
+	}
+
+	// Convert PaymentIntents to Payments
+	searchResult := iter.PaymentIntentSearchResult()
+	for _, pi := range searchResult.Data {
+		if pi.LatestCharge != nil && pi.LatestCharge.ID != "" {
+			payment := convertPaymentIntentToPayment(pi)
+			result.Payments = append(result.Payments, payment)
+		}
+	}
+
+	// Set pagination info from response
+	result.HasMore = searchResult.HasMore
+	if searchResult.NextPage != nil && *searchResult.NextPage != "" {
+		result.NextCursor = *searchResult.NextPage
+	}
+
+	return result, nil
+}
+
+func (c *Client) listChargesPaginatedFromList(ctx context.Context, params payments.ChargeListPaginatedParams, limit int) (payments.ChargesPage, error) {
+	// TODO: Use the new stripe.Client pattern once pagination properties are exposed.
+	// Currently the new client doesn't expose has_more (see: https://github.com/stripe/stripe-go/issues/2168).
+	// For now, we use the deprecated charge.Client which still exposes these properties.
+	params.Limit = limit
+	listParams := buildListParams(params)
+
+	// Create deprecated client with our API key and backend
+	chargeClient := &charge.Client{
+		B:   stripe.GetBackend(stripe.APIBackend),
+		Key: c.secretKey,
+	}
+
+	// Use deprecated resource-specific client to get pagination info
+	iter := chargeClient.List(listParams)
+
+	result := payments.ChargesPage{
+		Payments: make([]payments.Payment, 0, limit),
+	}
+
+	// Convert Charges to Payments
+	chargeList := iter.ChargeList()
+	for _, ch := range chargeList.Data {
+		payment := convertChargeToPayment(ch)
+		result.Payments = append(result.Payments, payment)
+	}
+
+	// Set pagination info from response
+	result.HasMore = chargeList.HasMore
+	if chargeList.HasMore && len(chargeList.Data) > 0 {
+		// Use the last charge ID as the cursor
+		lastCharge := chargeList.Data[len(chargeList.Data)-1]
+		result.NextCursor = lastCharge.ID
+	}
+
+	return result, nil
+}
+
+func joinWithAnd(parts []string) string {
+	if len(parts) == 0 {
+		return ""
+	}
+	result := parts[0]
+	for i := 1; i < len(parts); i++ {
+		result = result + " AND " + parts[i]
+	}
+	return result
+}
+
+func buildPaymentIntentSearchParams(params payments.ChargeListPaginatedParams) *stripe.PaymentIntentSearchParams {
 	searchParams := &stripe.PaymentIntentSearchParams{}
+
+	// Set limit
+	searchParams.Limit = stripe.Int64(int64(params.Limit))
 
 	// Expand data.latest_charge to get full charge data including billing_details
 	searchParams.AddExpand("data.latest_charge")
@@ -195,19 +311,16 @@ func buildPaymentIntentSearchParams(params payments.ChargeListParams) *stripe.Pa
 	return searchParams
 }
 
-func joinWithAnd(parts []string) string {
-	if len(parts) == 0 {
-		return ""
-	}
-	result := parts[0]
-	for i := 1; i < len(parts); i++ {
-		result = result + " AND " + parts[i]
-	}
-	return result
-}
-
-func buildListParams(params payments.ChargeListParams) *stripe.ChargeListParams {
+func buildListParams(params payments.ChargeListPaginatedParams) *stripe.ChargeListParams {
 	listParams := &stripe.ChargeListParams{}
+
+	// Set limit
+	listParams.Filters.AddFilter("limit", "", fmt.Sprintf("%d", params.Limit))
+
+	// Set starting_after cursor if provided
+	if params.Cursor != "" {
+		listParams.Filters.AddFilter("starting_after", "", params.Cursor)
+	}
 
 	// Expand data.payment_intent to get metadata from PaymentIntent
 	// (must use 'data.' prefix for expansions in list operations)
@@ -229,6 +342,17 @@ func buildListParams(params payments.ChargeListParams) *stripe.ChargeListParams 
 	}
 
 	return listParams
+}
+
+// convertToPaginatedParams converts ChargeListParams to ChargeListPaginatedParams
+func convertToPaginatedParams(params payments.ChargeListParams, limit int) payments.ChargeListPaginatedParams {
+	return payments.ChargeListPaginatedParams{
+		CreatedAfter:   params.CreatedAfter,
+		CreatedBefore:  params.CreatedBefore,
+		Status:         params.Status,
+		MetadataFilter: params.MetadataFilter,
+		Limit:          limit,
+	}
 }
 
 func convertChargeToPayment(charge *stripe.Charge) payments.Payment {
@@ -295,9 +419,9 @@ func extractCheckoutSessionID(pi *stripe.PaymentIntent) string {
 
 func convertPaymentIntentToPayment(pi *stripe.PaymentIntent) payments.Payment {
 	// Use the expanded latest_charge data if available
-	var charge *stripe.Charge
+	var ch *stripe.Charge
 	if pi.LatestCharge != nil && pi.LatestCharge.ID != "" {
-		charge = pi.LatestCharge
+		ch = pi.LatestCharge
 	}
 
 	// Build the payment from PaymentIntent data
@@ -312,28 +436,28 @@ func convertPaymentIntentToPayment(pi *stripe.PaymentIntent) payments.Payment {
 	}
 
 	// If we have expanded charge data, use it for additional fields
-	if charge != nil {
-		payment.ID = charge.ID
-		payment.Amount = money.New(charge.Amount, string(charge.Currency))
-		payment.Created = time.Unix(charge.Created, 0)
-		payment.Status = string(charge.Status)
-		payment.Description = charge.Description
+	if ch != nil {
+		payment.ID = ch.ID
+		payment.Amount = money.New(ch.Amount, string(ch.Currency))
+		payment.Created = time.Unix(ch.Created, 0)
+		payment.Status = string(ch.Status)
+		payment.Description = ch.Description
 
-		if charge.BillingDetails != nil {
+		if ch.BillingDetails != nil {
 			payment.BillingDetails = &payments.BillingDetails{
-				Name:  charge.BillingDetails.Name,
-				Email: charge.BillingDetails.Email,
-				Phone: charge.BillingDetails.Phone,
+				Name:  ch.BillingDetails.Name,
+				Email: ch.BillingDetails.Email,
+				Phone: ch.BillingDetails.Phone,
 			}
 
-			if charge.BillingDetails.Address != nil {
+			if ch.BillingDetails.Address != nil {
 				payment.BillingDetails.Address = &payments.Address{
-					City:       charge.BillingDetails.Address.City,
-					Country:    charge.BillingDetails.Address.Country,
-					Line1:      charge.BillingDetails.Address.Line1,
-					Line2:      charge.BillingDetails.Address.Line2,
-					PostalCode: charge.BillingDetails.Address.PostalCode,
-					State:      charge.BillingDetails.Address.State,
+					City:       ch.BillingDetails.Address.City,
+					Country:    ch.BillingDetails.Address.Country,
+					Line1:      ch.BillingDetails.Address.Line1,
+					Line2:      ch.BillingDetails.Address.Line2,
+					PostalCode: ch.BillingDetails.Address.PostalCode,
+					State:      ch.BillingDetails.Address.State,
 				}
 			}
 		}

@@ -77,6 +77,22 @@ type ChargeListParams struct {
 	MetadataFilter map[string]string
 }
 
+type ChargeListPaginatedParams struct {
+	CreatedAfter   *time.Time
+	CreatedBefore  *time.Time
+	Status         string
+	MetadataFilter map[string]string
+	Limit          int    // max items per page. Defaults to 10 if not set.
+	Cursor         string // ID of last item from previous page (empty for first page)
+}
+
+type ChargesPage struct {
+	Payments   []Payment
+	HasMore    bool
+	NextCursor string // ID to use for next page request (empty if HasMore=false)
+}
+
 type PaymentQuerier interface {
 	ListCharges(ctx context.Context, params ChargeListParams) iter.Seq2[Payment, error]
+	ListChargesPaginated(ctx context.Context, params ChargeListPaginatedParams) (ChargesPage, error)
 }

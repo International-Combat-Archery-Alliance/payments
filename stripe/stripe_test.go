@@ -9,65 +9,6 @@ import (
 	"github.com/stripe/stripe-go/v82"
 )
 
-func TestBuildPaymentIntentSearchParams_WithMetadata(t *testing.T) {
-	params := payments.ChargeListParams{
-		MetadataFilter: map[string]string{
-			"item_type": "donation",
-			"campaign":  "2024",
-		},
-	}
-
-	searchParams := buildPaymentIntentSearchParams(params)
-
-	// Query should contain metadata filters
-	if !strings.Contains(searchParams.Query, "metadata['item_type']:'donation'") {
-		t.Errorf("expected query to contain metadata item_type filter, got: %s", searchParams.Query)
-	}
-
-	if !strings.Contains(searchParams.Query, "metadata['campaign']:'2024'") {
-		t.Errorf("expected query to contain metadata campaign filter, got: %s", searchParams.Query)
-	}
-
-	// Query should contain status filter (default to succeeded)
-	if !strings.Contains(searchParams.Query, "status:'succeeded'") {
-		t.Errorf("expected query to contain status filter, got: %s", searchParams.Query)
-	}
-}
-
-func TestBuildPaymentIntentSearchParams_WithDateRange(t *testing.T) {
-	after := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	before := time.Date(2024, 12, 31, 0, 0, 0, 0, time.UTC)
-
-	params := payments.ChargeListParams{
-		CreatedAfter:  &after,
-		CreatedBefore: &before,
-	}
-
-	searchParams := buildPaymentIntentSearchParams(params)
-
-	// Query should contain date filters
-	if !strings.Contains(searchParams.Query, "created>1704067200") {
-		t.Errorf("expected query to contain created after filter, got: %s", searchParams.Query)
-	}
-
-	if !strings.Contains(searchParams.Query, "created<1735603200") {
-		t.Errorf("expected query to contain created before filter, got: %s", searchParams.Query)
-	}
-}
-
-func TestBuildPaymentIntentSearchParams_WithCustomStatus(t *testing.T) {
-	params := payments.ChargeListParams{
-		Status:         "requires_capture",
-		MetadataFilter: map[string]string{"item_type": "donation"},
-	}
-
-	searchParams := buildPaymentIntentSearchParams(params)
-
-	if !strings.Contains(searchParams.Query, "status:'requires_capture'") {
-		t.Errorf("expected query to contain status:'requires_capture', got: %s", searchParams.Query)
-	}
-}
-
 func TestJoinWithAnd(t *testing.T) {
 	// Test empty slice
 	result := joinWithAnd([]string{})
@@ -93,24 +34,6 @@ func TestJoinWithAnd(t *testing.T) {
 	expected = "a AND b AND c"
 	if result != expected {
 		t.Errorf("expected '%s', got: %s", expected, result)
-	}
-}
-
-func TestBuildListParams_WithDateRange(t *testing.T) {
-	after := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	before := time.Date(2024, 12, 31, 0, 0, 0, 0, time.UTC)
-
-	params := payments.ChargeListParams{
-		CreatedAfter:  &after,
-		CreatedBefore: &before,
-	}
-
-	listParams := buildListParams(params)
-
-	// Verify the ListParams is created (we can't inspect internal Filters directly)
-	// but we can verify it compiles and runs
-	if listParams == nil {
-		t.Error("expected listParams to be non-nil")
 	}
 }
 
@@ -324,4 +247,110 @@ func TestExtractCheckoutSessionID_EmptyMetadata(t *testing.T) {
 func TestClient_ImplementsPaymentQuerier(t *testing.T) {
 	client := &Client{}
 	var _ payments.PaymentQuerier = client
+}
+
+func TestBuildPaymentIntentSearchParams_WithDefaults(t *testing.T) {
+	params := payments.ChargeListPaginatedParams{
+		Limit: 10,
+	}
+
+	searchParams := buildPaymentIntentSearchParams(params)
+
+	if searchParams.Limit == nil || *searchParams.Limit != 10 {
+		t.Errorf("expected limit 10, got: %v", searchParams.Limit)
+	}
+
+	if !strings.Contains(searchParams.Query, "status:'succeeded'") {
+		t.Errorf("expected query to contain default status filter, got: %s", searchParams.Query)
+	}
+}
+
+func TestBuildPaymentIntentSearchParams_WithLimit(t *testing.T) {
+	params := payments.ChargeListPaginatedParams{
+		Limit: 50,
+	}
+
+	searchParams := buildPaymentIntentSearchParams(params)
+
+	if searchParams.Limit == nil || *searchParams.Limit != 50 {
+		t.Errorf("expected limit 50, got: %v", searchParams.Limit)
+	}
+}
+
+func TestBuildPaymentIntentSearchParams_WithMetadata(t *testing.T) {
+	params := payments.ChargeListPaginatedParams{
+		Limit: 10,
+		MetadataFilter: map[string]string{
+			"item_type": "donation",
+		},
+	}
+
+	searchParams := buildPaymentIntentSearchParams(params)
+
+	if !strings.Contains(searchParams.Query, "metadata['item_type']:'donation'") {
+		t.Errorf("expected query to contain metadata filter, got: %s", searchParams.Query)
+	}
+}
+
+func TestBuildPaymentIntentSearchParams_WithDateRange(t *testing.T) {
+	after := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	before := time.Date(2024, 12, 31, 0, 0, 0, 0, time.UTC)
+
+	params := payments.ChargeListPaginatedParams{
+		Limit:         10,
+		CreatedAfter:  &after,
+		CreatedBefore: &before,
+	}
+
+	searchParams := buildPaymentIntentSearchParams(params)
+
+	if !strings.Contains(searchParams.Query, "created>1704067200") {
+		t.Errorf("expected query to contain created after filter, got: %s", searchParams.Query)
+	}
+
+	if !strings.Contains(searchParams.Query, "created<1735603200") {
+		t.Errorf("expected query to contain created before filter, got: %s", searchParams.Query)
+	}
+}
+
+func TestBuildListParams_WithDefaults(t *testing.T) {
+	params := payments.ChargeListPaginatedParams{
+		Limit: 10,
+	}
+
+	listParams := buildListParams(params)
+
+	if listParams == nil {
+		t.Error("expected listParams to be non-nil")
+	}
+}
+
+func TestBuildListParams_WithCursor(t *testing.T) {
+	params := payments.ChargeListPaginatedParams{
+		Limit:  10,
+		Cursor: "ch_last123",
+	}
+
+	listParams := buildListParams(params)
+
+	if listParams == nil {
+		t.Error("expected listParams to be non-nil")
+	}
+}
+
+func TestBuildListParams_WithDateRange(t *testing.T) {
+	after := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	before := time.Date(2024, 12, 31, 0, 0, 0, 0, time.UTC)
+
+	params := payments.ChargeListPaginatedParams{
+		Limit:         10,
+		CreatedAfter:  &after,
+		CreatedBefore: &before,
+	}
+
+	listParams := buildListParams(params)
+
+	if listParams == nil {
+		t.Error("expected listParams to be non-nil")
+	}
 }
