@@ -24,6 +24,8 @@ type CheckoutParams struct {
 	// enable or disable it.
 	AllowAdaptivePricing bool
 	CustomerEmail        *string
+	// Email address where the payment provider should send the payment receipt.
+	ReceiptEmail *string
 }
 
 type CheckoutInfo struct {

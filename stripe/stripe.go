@@ -94,6 +94,12 @@ func (c *Client) CreateCheckout(ctx context.Context, params payments.CheckoutPar
 		CustomerEmail: params.CustomerEmail,
 	}
 
+	if params.ReceiptEmail != nil {
+		checkoutParams.PaymentIntentData = &stripe.CheckoutSessionCreatePaymentIntentDataParams{
+			ReceiptEmail: params.ReceiptEmail,
+		}
+	}
+
 	if params.SessionAliveDuration != nil {
 		checkoutParams.ExpiresAt = stripe.Int64(time.Now().Add(*params.SessionAliveDuration).Unix())
 	}
